@@ -25,7 +25,10 @@ if "%choice%"=="5" goto EOF
 :ROLE1
 cls
 echo --- RUNNING ROLE 1 (GPU PREPROCESSING) ---
-pip install torch pandas sentence-transformers numpy --quiet
+echo [*] Installing PyTorch with NVIDIA CUDA support...
+pip uninstall torch -y --quiet
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --quiet
+pip install pandas sentence-transformers numpy --quiet
 python role1_gpu_preprocessor.py
 pause
 goto MENU
