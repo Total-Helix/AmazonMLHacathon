@@ -50,33 +50,38 @@ class GPUDatasetPreprocessor:
 
     def process_file_in_chunks(self, file_path, output_path, chunk_size=100000):
         """Processes massive TSV files without crashing the 8GB VRAM RTX 5050."""
+        import numpy as np
         print(f"\n[*] Processing: {file_path}")
         if not os.path.exists(file_path):
             print(f"❌ File not found: {file_path}")
             return
             
-        # Read the TSV in chunks to prevent RAM explosions
         chunk_iter = pd.read_csv(file_path, sep='\t', chunksize=chunk_size)
         
         is_first_chunk = True
+        all_embeddings = []
+        
         for i, chunk in enumerate(chunk_iter):
             print(f"    -> Cleaning Chunk {i+1} ({len(chunk)} rows)...")
             
-            # 1. Clean the text (Role 1 Task)
+            # 1. Clean the text (CPU)
             chunk['clean_name'] = chunk['business_name'].apply(self.normalize_text)
             chunk['clean_address'] = chunk['business_address'].apply(self.normalize_text)
             
-            # Create a combined string for the embedding
-            combined_text = chunk['clean_name'] + " " + chunk['clean_address']
+            # 2. Generate GPU Embeddings (RTX 5050 Heavy Lift)
+            print(f"    -> Generating GPU Embeddings (Batch Size 256)...")
+            combined_text = (chunk['clean_name'] + " " + chunk['clean_address']).tolist()
             
-            # 2. Generate GPU Embeddings in batches (Batch size 256 prevents RTX 5050 OOM)
-            print(f"    -> Generating GPU Embeddings...")
-            # We don't save the embeddings directly into the CSV as they are huge vectors.
-            # Instead, we just save the cleaned text. Role 3's code will re-embed or load them.
-            # (If you want to save embeddings, use .parquet or .npy instead of .tsv)
+            # Use the GPU to encode. batch_size=256 is safe for 8GB VRAM.
+            embeddings = self.model.encode(
+                combined_text, 
+                batch_size=256, 
+                show_progress_bar=False, 
+                device=self.device
+            )
+            all_embeddings.append(embeddings)
             
-            # For this script, we output a perfectly clean TSV for Role 2 (Blocking)
-            
+            # Save the cleaned text TSV
             mode = 'w' if is_first_chunk else 'a'
             header = is_first_chunk
             chunk.to_csv(output_path, sep='\t', index=False, mode=mode, header=header)
@@ -87,7 +92,14 @@ class GPUDatasetPreprocessor:
             torch.cuda.empty_cache()
             gc.collect()
             
+        # Stack all embeddings and save as a compressed Numpy array
+        print(f"    -> Saving dense vector embeddings to disk...")
+        final_embeddings = np.vstack(all_embeddings)
+        npy_path = output_path.replace('.tsv', '_embeddings.npy')
+        np.save(npy_path, final_embeddings)
+        
         print(f"✅ Saved cleaned dataset to: {output_path}")
+        print(f"✅ Saved GPU embeddings to: {npy_path}")
 
 if __name__ == "__main__":
     preprocessor = GPUDatasetPreprocessor()
