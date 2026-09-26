@@ -1,0 +1,33 @@
+{
+    "optimal_threshold": 0.5,
+    "best_macro_f05": 0.9047619047619048,
+    "feature_names": [
+        "name_jaro_winkler",
+        "name_token_sort_ratio",
+        "name_token_set_ratio",
+        "name_levenshtein_ratio",
+        "name_partial_ratio",
+        "addr_jaro_winkler",
+        "addr_token_sort_ratio",
+        "addr_token_set_ratio",
+        "addr_levenshtein_ratio",
+        "addr_partial_ratio",
+        "name_len_diff",
+        "name_len_ratio",
+        "addr_len_diff",
+        "addr_len_ratio",
+        "name_exact_match",
+        "addr_exact_match",
+        "first_token_match",
+        "addr_digits_overlap",
+        "country_match",
+        "name_tfidf_char_cosine",
+        "addr_tfidf_char_cosine",
+        "full_tfidf_char_cosine",
+        "semantic_full_cosine",
+        "semantic_name_cosine"
+    ],
+    "beta": 0.5,
+    "embedding_model": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    "use_fake_data": true
+}
