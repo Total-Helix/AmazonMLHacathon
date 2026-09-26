@@ -18,9 +18,14 @@ class GPUDatasetPreprocessor:
         else:
             print(f"[*] GPU Name: {torch.cuda.get_device_name(0)}")
             
-        # 2. Load Multilingual Model (for French/Hindi/English)
-        print("[*] Loading Multilingual Embedding Model to VRAM...")
-        self.model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2', device=self.device)
+        # 2. Load Multilingual Model (Optimized for RTX Tensor Cores)
+        print("[*] Loading Multilingual Embedding Model to VRAM (FP16 Mode)...")
+        # Using FP16 (Half Precision) doubles the speed on RTX cards and halves VRAM usage
+        self.model = SentenceTransformer(
+            'paraphrase-multilingual-MiniLM-L12-v2', 
+            device=self.device,
+            model_kwargs={"torch_dtype": torch.float16}
+        )
 
     def normalize_text(self, text):
         """Role 1 Core Task: Standardize text, legal suffixes, and French characters."""
@@ -69,13 +74,13 @@ class GPUDatasetPreprocessor:
             chunk['clean_address'] = chunk['business_address'].apply(self.normalize_text)
             
             # 2. Generate GPU Embeddings (RTX 5050 Heavy Lift)
-            print(f"    -> Generating GPU Embeddings (Batch Size 256)...")
+            # Since we are using FP16, we can safely bump batch_size to 1024 to max out CUDA cores
+            print(f"    -> Generating GPU Embeddings (Batch Size 1024)...")
             combined_text = (chunk['clean_name'] + " " + chunk['clean_address']).tolist()
             
-            # Use the GPU to encode. batch_size=256 is safe for 8GB VRAM.
             embeddings = self.model.encode(
                 combined_text, 
-                batch_size=256, 
+                batch_size=1024, 
                 show_progress_bar=False, 
                 device=self.device
             )
