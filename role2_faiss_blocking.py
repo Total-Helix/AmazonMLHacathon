@@ -14,7 +14,6 @@ class FaissCandidateGenerator:
         import gc
         print("[*] Loading cleaned TSV data...")
         try:
-            # OPTIMIZATION: Only load 'entity_id' to save gigabytes of RAM. We don't need text here.
             s1_df = pd.read_csv("data/clean_data/test_source1_clean.tsv", sep='\t', usecols=['entity_id'])
             s2_df = pd.read_csv("data/clean_data/test_source2_clean.tsv", sep='\t', usecols=['entity_id'])
             s3_df = pd.read_csv("data/clean_data/test_source3_clean.tsv", sep='\t', usecols=['entity_id'])
@@ -34,93 +33,74 @@ class FaissCandidateGenerator:
                 use_gpu = True
                 device = torch.device('cuda')
                 print(f"[*] Detected GPU: {torch.cuda.get_device_name(0)}")
-                print("[*] Activating PyTorch GPU Acceleration (Bypassing FAISS CPU)...")
+                print("[*] Activating PyTorch Chunked GPU Search (Bypassing 16GB RAM Limit)...")
         except ImportError:
-            pass
+            print("[!] PyTorch not found. Please run the updated MASTER_MENU.bat to install it!")
+            return
+
+        if not use_gpu:
+            print("❌ Error: No GPU detected for Role 2. The 17.6GB dataset will crash your RAM.")
+            print("Please ensure you run MASTER_MENU.bat to install PyTorch with CUDA!")
+            return
 
         s2_s3_files = glob.glob("data/clean_data/test_source2_clean_embeddings_chunk*.npy") + \
                       glob.glob("data/clean_data/test_source3_clean_embeddings_chunk*.npy")
         s1_files = sorted(glob.glob("data/clean_data/test_source1_clean_embeddings_chunk*.npy"))
 
-        all_D, all_I = [], []
-
-        if use_gpu:
-            # --- PYTORCH GPU SEARCH ---
-            print("[*] Loading candidate pool directly into VRAM...")
-            db_chunks = []
-            for chunk_file in s2_s3_files:
-                embs = np.load(chunk_file).astype('float32')
-                # Move to GPU and normalize
-                t = torch.tensor(embs, device=device)
-                t = torch.nn.functional.normalize(t, p=2, dim=1)
-                db_chunks.append(t)
-                del embs
+        all_I = []
+        all_D = []
+        
+        print(f"[*] Starting Ultra-Low Memory GPU Search for {len(s1_df)} Source 1 entities...")
+        
+        # Loop through Source 1 (Queries) one chunk at a time
+        for s1_idx, s1_chunk_file in enumerate(s1_files):
+            print(f"    -> Processing Query Chunk {s1_idx + 1}/{len(s1_files)}...")
             
-            db_tensor = torch.cat(db_chunks, dim=0).T # Transpose for matrix multiplication
-            del db_chunks
-            gc.collect()
-            print("[*] Candidate pool loaded to GPU!")
-
-            print(f"[*] Querying GPU for {len(s1_df)} Source 1 entities...")
-            for chunk_file in s1_files:
-                s1_embs = np.load(chunk_file).astype('float32')
-                q_tensor = torch.tensor(s1_embs, device=device)
-                q_tensor = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
+            s1_embs = np.load(s1_chunk_file).astype('float32')
+            q_tensor = torch.tensor(s1_embs, device=device)
+            q_tensor = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
+            del s1_embs
+            
+            # Keep a running tracker of the Best Top-K scores and indices for THIS query chunk
+            best_scores = torch.full((q_tensor.shape[0], self.top_k), -1.0, device=device)
+            best_indices = torch.zeros((q_tensor.shape[0], self.top_k), dtype=torch.int64, device=device)
+            
+            global_candidate_offset = 0
+            
+            # Loop through Source 2 & 3 (Candidates) one chunk at a time
+            for s2s3_chunk_file in s2_s3_files:
+                db_embs = np.load(s2s3_chunk_file).astype('float32')
+                db_tensor = torch.tensor(db_embs, device=device)
+                db_tensor = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
                 
-                # Cosine similarity via Matrix Multiplication
-                similarity = torch.matmul(q_tensor, db_tensor)
+                # Multiply Query Batch x Database Batch
+                similarity = torch.matmul(q_tensor, db_tensor.T)
                 
-                # Get Top K
-                top_scores, top_indices = torch.topk(similarity, self.top_k, dim=1)
-                all_D.append(top_scores.cpu().numpy())
-                all_I.append(top_indices.cpu().numpy())
+                # Get the Top K from THIS specific comparison
+                k = min(self.top_k, similarity.shape[1])
+                local_top_scores, local_top_indices = torch.topk(similarity, k, dim=1)
                 
-                del q_tensor, similarity, top_scores, top_indices, s1_embs
+                # Offset indices so they map to the global candidate pool dataframe
+                local_top_indices += global_candidate_offset
+                global_candidate_offset += db_tensor.shape[0]
+                
+                # Concatenate the running best with this chunk's best, and keep the overall Top K
+                combined_scores = torch.cat([best_scores, local_top_scores], dim=1)
+                combined_indices = torch.cat([best_indices, local_top_indices], dim=1)
+                
+                best_scores, final_top_idx = torch.topk(combined_scores, self.top_k, dim=1)
+                best_indices = torch.gather(combined_indices, 1, final_top_idx)
+                
+                del db_embs, db_tensor, similarity, local_top_scores, local_top_indices, combined_scores, combined_indices, final_top_idx
                 torch.cuda.empty_cache()
-                gc.collect()
-                
-            del db_tensor
+            
+            # Finished scanning all candidates for this S1 query chunk
+            all_D.append(best_scores.cpu().numpy())
+            all_I.append(best_indices.cpu().numpy())
+            del q_tensor, best_scores, best_indices
             torch.cuda.empty_cache()
+            gc.collect()
 
-        else:
-            # --- FAISS CPU SEARCH (Approximate Nearest Neighbors) ---
-            # Standard Flat search takes hours on massive datasets. We use IVF for 100x speed.
-            print("[*] Building FAISS IVF Index incrementally to save RAM...")
-            
-            nlist = 1024 # Number of Voronoi cell clusters
-            quantizer = faiss.IndexFlatIP(self.dimension)
-            index = faiss.IndexIVFFlat(quantizer, self.dimension, nlist, faiss.METRIC_INNER_PRODUCT)
-            
-            # FAISS IVF requires training on a sample of the data first to build the clusters
-            if s2_s3_files:
-                print("    -> Training FAISS index on data sample...")
-                sample_embs = np.load(s2_s3_files[0]).astype('float32')
-                faiss.normalize_L2(sample_embs)
-                index.train(sample_embs)
-                del sample_embs
-                gc.collect()
-
-            for chunk_file in s2_s3_files:
-                embs = np.load(chunk_file).astype('float32')
-                faiss.normalize_L2(embs)
-                index.add(embs)
-                del embs
-                gc.collect()
-            print("[*] FAISS Index built successfully!")
-
-            # nprobe determines how many nearby clusters to search. Higher = more accurate but slightly slower.
-            index.nprobe = 16
-            print(f"[*] Querying FAISS index for {len(s1_df)} Source 1 entities...")
-            for chunk_file in s1_files:
-                s1_embs = np.load(chunk_file).astype('float32')
-                faiss.normalize_L2(s1_embs)
-                D, I = index.search(s1_embs, self.top_k)
-                all_D.append(D)
-                all_I.append(I)
-                del s1_embs
-                gc.collect()
-
-        # Stack the results safely
         D = np.vstack(all_D)
         I = np.vstack(all_I)
 
