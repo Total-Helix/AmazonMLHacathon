@@ -119,6 +119,7 @@ class InferenceEngine:
             # Ultra-cheap pre-filter: quick Jaro-Winkler on names to drop obvious garbage
             # This runs in ~30 seconds on 25M pairs and eliminates ~60% of them
             from rapidfuzz.distance import JaroWinkler
+            import gc
             print("[InferenceEngine] Running cheap name pre-filter to eliminate obvious non-matches...")
             n1 = pairwise_df["name_1"].fillna("").astype(str).str.lower().str.strip().tolist()
             n2 = pairwise_df["name_2"].fillna("").astype(str).str.lower().str.strip().tolist()
@@ -127,28 +128,59 @@ class InferenceEngine:
             pairwise_df = pairwise_df[jw_scores >= 0.35].reset_index(drop=True)
             print(f"[InferenceEngine] Name pre-filter kept {len(pairwise_df)} / {pre_count} pairs (dropped {pre_count - len(pairwise_df)})")
             del n1, n2, jw_scores
+            gc.collect()
 
-            print("[InferenceEngine] Extracting features for test candidate pairs...")
-            X_test = self.feature_engine.transform(pairwise_df)
+            # --- CHUNKED INFERENCE: Process 500K rows at a time to prevent MemoryError ---
+            CHUNK_SIZE = 500_000
+            total_rows = len(pairwise_df)
+            n_chunks = (total_rows + CHUNK_SIZE - 1) // CHUNK_SIZE
+            print(f"[InferenceEngine] Processing {total_rows} pairs in {n_chunks} chunks of {CHUNK_SIZE}...")
 
-            # Reorder columns to match training feature order
-            expected_features = self.metadata.get("feature_names", list(X_test.columns))
-            X_test = X_test.reindex(columns=expected_features, fill_value=0.0)
+            all_surviving = []
+            expected_features = self.metadata.get("feature_names", None)
 
-            print("[InferenceEngine] Scoring candidate pairs with LightGBM...")
-            pred_probs = self.model.predict_proba(X_test)[:, 1]
-            pairwise_df["score"] = pred_probs
+            for chunk_idx in range(n_chunks):
+                start = chunk_idx * CHUNK_SIZE
+                end = min(start + CHUNK_SIZE, total_rows)
+                chunk_df = pairwise_df.iloc[start:end]
 
-            # Filter candidates based on optimal F_0.5 threshold
-            surviving = pairwise_df[pairwise_df["score"] >= self.optimal_threshold]
-            print(f"[InferenceEngine] Surviving matches after applying threshold ({self.optimal_threshold:.2f}): {len(surviving)} / {len(pairwise_df)}")
+                print(f"  -> Chunk {chunk_idx + 1}/{n_chunks}: rows {start}-{end} ({len(chunk_df)} pairs)")
 
-            # Vectorized groupby — 100x faster than iterrows() on millions of rows
-            for s1_id, group in surviving.groupby("source1_id"):
-                if s1_id in final_matches_map:
-                    final_matches_map[s1_id] = list(dict.fromkeys(
-                        c for c in group["cand_id"].tolist() if c.startswith(("S2-", "S3-"))
-                    ))
+                # Extract features for this chunk only
+                X_chunk = self.feature_engine.transform(chunk_df)
+
+                # Reorder columns to match training feature order
+                if expected_features is None:
+                    expected_features = list(X_chunk.columns)
+                X_chunk = X_chunk.reindex(columns=expected_features, fill_value=0.0)
+
+                # Score with LightGBM
+                chunk_probs = self.model.predict_proba(X_chunk)[:, 1]
+                chunk_df = chunk_df.copy()
+                chunk_df["score"] = chunk_probs
+
+                # Keep only survivors
+                chunk_surviving = chunk_df[chunk_df["score"] >= self.optimal_threshold]
+                if len(chunk_surviving) > 0:
+                    all_surviving.append(chunk_surviving[["source1_id", "cand_id", "score"]])
+
+                del X_chunk, chunk_probs, chunk_df, chunk_surviving
+                gc.collect()
+
+            # Merge all survivors
+            if all_surviving:
+                surviving = pd.concat(all_surviving, ignore_index=True)
+                print(f"[InferenceEngine] Total surviving matches: {len(surviving)}")
+
+                for s1_id, group in surviving.groupby("source1_id"):
+                    if s1_id in final_matches_map:
+                        final_matches_map[s1_id] = list(dict.fromkeys(
+                            c for c in group["cand_id"].tolist() if c.startswith(("S2-", "S3-"))
+                        ))
+                del all_surviving, surviving
+            else:
+                print("[InferenceEngine] No matches survived the threshold.")
+            gc.collect()
 
         # Write output TSVs
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
