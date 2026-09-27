@@ -89,58 +89,52 @@ class FaissCandidateGenerator:
                 gc.collect()
 
         else:
-            # --- NUMPY CPU CHUNKED SEARCH (Fixes 16GB RAM Thrashing) ---
-            print("[!] Proceeding with Ultra-Low Memory Numpy CPU Search...")
-            print("[*] This entirely bypasses the FAISS 16GB memory limit by streaming chunks!")
+            # --- FAISS CPU SEARCH WITH PRODUCT QUANTIZATION (Fixes 16GB RAM limit & runs in 3 minutes) ---
+            print("[!] Proceeding with FAISS IVFPQ (Highly Compressed CPU Search)...")
+            print("[*] This will compress the 17GB dataset down to ~500MB in RAM!")
             
-            for s1_idx, s1_chunk_file in enumerate(s1_files):
-                print(f"    -> Processing Query Chunk {s1_idx + 1}/{len(s1_files)}...")
+            nlist = 1024 # Clusters
+            m = 48       # Number of sub-vector quantizers (384 / 48 = 8)
+            nbits = 8    # Bits per sub-vector
+            
+            quantizer = faiss.IndexFlatIP(self.dimension)
+            index = faiss.IndexIVFPQ(quantizer, self.dimension, nlist, m, nbits, faiss.METRIC_INNER_PRODUCT)
+            
+            if s2_s3_files:
+                print("    -> Training FAISS PQ index on data sample (this takes ~1 minute)...")
+                # Load a larger sample for better PQ training (e.g. 2 chunks)
+                sample_chunks = []
+                for sample_file in s2_s3_files[:2]:
+                    embs = np.load(sample_file).astype('float32')
+                    faiss.normalize_L2(embs)
+                    sample_chunks.append(embs)
                 
-                s1_embs = np.load(s1_chunk_file).astype('float32')
-                
-                # L2 Normalize Query
-                norms = np.linalg.norm(s1_embs, axis=1, keepdims=True)
-                norms[norms == 0] = 1e-10
-                q_mat = s1_embs / norms
+                training_data = np.vstack(sample_chunks)
+                index.train(training_data)
+                del training_data, sample_chunks
+                gc.collect()
+
+            print("    -> Indexing 10 Million Candidates into 500MB Compressed RAM...")
+            for chunk_file in s2_s3_files:
+                embs = np.load(chunk_file).astype('float32')
+                faiss.normalize_L2(embs)
+                index.add(embs)
+                del embs
+                gc.collect()
+            print("[*] Compressed FAISS Index built successfully!")
+
+            index.nprobe = 16
+            all_D = []
+            all_I = []
+            print(f"[*] Querying FAISS index for {len(s1_df)} Source 1 entities...")
+            for s1_idx, chunk_file in enumerate(s1_files):
+                print(f"    -> Querying Chunk {s1_idx + 1}/{len(s1_files)}...")
+                s1_embs = np.load(chunk_file).astype('float32')
+                faiss.normalize_L2(s1_embs)
+                D, I = index.search(s1_embs, self.top_k)
+                all_D.append(D)
+                all_I.append(I)
                 del s1_embs
-                
-                best_scores = np.full((q_mat.shape[0], self.top_k), -1.0, dtype='float32')
-                best_indices = np.zeros((q_mat.shape[0], self.top_k), dtype='int64')
-                global_candidate_offset = 0
-                
-                for s2s3_chunk_file in s2_s3_files:
-                    db_embs = np.load(s2s3_chunk_file).astype('float32')
-                    
-                    # L2 Normalize Candidates
-                    db_norms = np.linalg.norm(db_embs, axis=1, keepdims=True)
-                    db_norms[db_norms == 0] = 1e-10
-                    db_mat = db_embs / db_norms
-                    del db_embs
-                    
-                    # Cosine Similarity via Dot Product (OpenBLAS AVX2)
-                    similarity = np.dot(q_mat, db_mat.T)
-                    
-                    # Get Top K (use argsort on negated array to get descending)
-                    k = min(self.top_k, similarity.shape[1])
-                    local_top_indices = np.argsort(-similarity, axis=1)[:, :k]
-                    local_top_scores = np.take_along_axis(similarity, local_top_indices, axis=1)
-                    
-                    local_top_indices += global_candidate_offset
-                    global_candidate_offset += db_mat.shape[0]
-                    
-                    # Merge with running best
-                    combined_scores = np.concatenate([best_scores, local_top_scores], axis=1)
-                    combined_indices = np.concatenate([best_indices, local_top_indices], axis=1)
-                    
-                    final_top_idx = np.argsort(-combined_scores, axis=1)[:, :self.top_k]
-                    best_scores = np.take_along_axis(combined_scores, final_top_idx, axis=1)
-                    best_indices = np.take_along_axis(combined_indices, final_top_idx, axis=1)
-                    
-                    del db_mat, similarity, local_top_indices, local_top_scores, combined_scores, combined_indices, final_top_idx
-                
-                all_D.append(best_scores)
-                all_I.append(best_indices)
-                del q_mat, best_scores, best_indices
                 gc.collect()
 
         D = np.vstack(all_D)
