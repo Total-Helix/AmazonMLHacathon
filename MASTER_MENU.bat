@@ -1,9 +1,21 @@
 @echo off
 color 0A
+
+:: Check if Python 3.11 is installed to bypass the Python 3.14 PyTorch bug
+python3.11 --version >nul 2>&1
+if %errorlevel% equ 0 (
+    set PY_CMD=python3.11
+    set PIP_CMD=python3.11 -m pip
+) else (
+    set PY_CMD=python
+    set PIP_CMD=pip
+)
+
 :MENU
 cls
 echo ========================================================
 echo       AMAZON ML HACKATHON - MASTER PIPELINE
+echo       Using Python Executable: %PY_CMD%
 echo ========================================================
 echo.
 echo Who is running this script right now?
@@ -26,10 +38,10 @@ if "%choice%"=="5" goto EOF
 cls
 echo --- RUNNING ROLE 1 (GPU PREPROCESSING) ---
 echo [*] Installing PyTorch with NVIDIA CUDA support...
-pip uninstall torch -y --quiet
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --quiet
-pip install pandas sentence-transformers numpy --quiet
-python role1_gpu_preprocessor.py
+%PIP_CMD% uninstall torch -y --quiet
+%PIP_CMD% install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --quiet
+%PIP_CMD% install pandas sentence-transformers numpy --quiet
+%PY_CMD% role1_gpu_preprocessor.py
 pause
 goto MENU
 
@@ -37,24 +49,25 @@ goto MENU
 cls
 echo --- RUNNING ROLE 2 (FAISS/PYTORCH BLOCKING) ---
 echo [*] Installing PyTorch with NVIDIA CUDA support...
-pip uninstall torch -y
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install faiss-cpu pandas numpy
-python role2_faiss_blocking.py
+%PIP_CMD% uninstall torch -y --quiet
+%PIP_CMD% install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+%PIP_CMD% install faiss-cpu pandas numpy --quiet
+%PY_CMD% role2_faiss_blocking.py
 pause
 goto MENU
 
 :ROLE3
 cls
 echo --- RUNNING ROLE 3 (LIGHTGBM ML) ---
-pip install lightgbm scikit-learn pandas --quiet
-python main.py --use-real-data --train --infer
+%PIP_CMD% install lightgbm scikit-learn pandas --quiet
+%PIP_CMD% install -r requirements.txt --quiet
+%PY_CMD% main.py --use-real-data --train --infer
 pause
 goto MENU
 
 :ROLE4
 cls
 echo --- RUNNING ROLE 4 (PACKAGING) ---
-python package.py
+%PY_CMD% package.py
 pause
 goto MENU
