@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATA_DIR = PROJECT_ROOT / "data"
 FAKE_DATA_DIR = DATA_DIR / "fake_data"
-REAL_DATA_DIR = PROJECT_ROOT / "student_resource" / "dataset"
+REAL_DATA_DIR = PROJECT_ROOT / "dataset"
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"
@@ -113,7 +113,7 @@ class ERConfig:
 
     @property
     def test_candidate_pairs_path(self) -> Path:
-        return self.active_data_dir / "test" / "candidate_pairs.tsv"
+        return self.output_dir / "candidate_pairs.tsv"
 
     # Submission output paths
     @property

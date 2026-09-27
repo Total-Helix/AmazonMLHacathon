@@ -381,14 +381,29 @@ class DataLoader:
         combined_target_df = pd.concat([s2_df, s3_df], ignore_index=True)
         target_lookup = combined_target_df.set_index("entity_id").to_dict(orient="index")
 
-        # Load candidate pairs
-        candidate_pairs = self.load_id_list_tsv(cand_path, value_col_name="candidate_entity_ids")
-
         # Load ground truth if training split
         ground_truth: Optional[Dict[str, Set[str]]] = None
         if is_train:
             gt_dict = self.load_id_list_tsv(self.config.train_ground_truth_path, value_col_name="matched_entity_ids")
             ground_truth = {s1: set(matches) for s1, matches in gt_dict.items()}
+
+        # Load or Generate candidate pairs
+        try:
+            candidate_pairs = self.load_id_list_tsv(cand_path, value_col_name="candidate_entity_ids")
+        except FileNotFoundError:
+            if is_train:
+                print(f"[!] Warning: {cand_path} missing!")
+                print("[*] Auto-generating synthetic training candidates from Ground Truth to save time...")
+                candidate_pairs = {}
+                target_ids = list(target_lookup.keys())
+                import random
+                for s1, matches in ground_truth.items():
+                    # 1 positive match + 4 random negative matches per query
+                    cands = list(matches)
+                    cands.extend(random.sample(target_ids, min(4, len(target_ids))))
+                    candidate_pairs[s1] = cands
+            else:
+                raise
 
         return s1_df, target_lookup, ground_truth, candidate_pairs
 
