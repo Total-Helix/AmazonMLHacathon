@@ -37,7 +37,18 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATA_DIR = PROJECT_ROOT / "data"
 FAKE_DATA_DIR = DATA_DIR / "fake_data"
-REAL_DATA_DIR = PROJECT_ROOT / "student_resource" / "dataset"
+
+# Dynamically find the real dataset folder to prevent path errors
+possible_paths = [
+    PROJECT_ROOT / "dataset",
+    PROJECT_ROOT / "student_resource" / "dataset",
+    PROJECT_ROOT / "data" / "dataset"
+]
+REAL_DATA_DIR = possible_paths[0] # Default fallback
+for p in possible_paths:
+    if (p / "train" / "train_source1.tsv").exists() or (p / "test" / "test_source1.tsv").exists():
+        REAL_DATA_DIR = p
+        break
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"
