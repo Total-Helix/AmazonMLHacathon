@@ -4,9 +4,9 @@ import faiss
 import os
 
 class FaissCandidateGenerator:
-    def __init__(self, top_k=5):
+    def __init__(self, top_k=15):
         print("=== Role 2: FAISS Algorithmic Blocking Engine ===")
-        self.top_k = top_k  # How many candidates to generate per Source 1 entity
+        self.top_k = top_k  # Restored to 15 for maximum accuracy on GPU
         self.dimension = 384  # Size of MiniLM-L12-v2 embeddings
 
     def build_and_search(self):

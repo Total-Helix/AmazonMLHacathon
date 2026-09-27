@@ -142,7 +142,7 @@ class ERConfig:
     # Essential for cross-lingual matches (e.g. French 'Pharmacie Centrale' -> 'Central Pharmacy').
     embedding_model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_batch_size: int = 64
-    use_embeddings: bool = False  # Disabled for 10x speedup on CPU
+    use_embeddings: bool = True  # Re-enabled for maximum accuracy on GPU
 
     # LightGBM Classifier Parameters
     lgbm_params: Dict[str, Any] = field(default_factory=lambda: {
