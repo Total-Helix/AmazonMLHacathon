@@ -180,19 +180,16 @@ class FeatureEngineeringEngine:
             import numpy as np
             return np.array([scorer(q, c) for q, c in zip(queries, choices)], dtype=np.float32)
 
-        # 1. Name Lexical Features
+        # 1. Name Lexical Features (kept: top 3 most important name features)
         features["name_jaro_winkler"]       = _cdist_pairs(n1_norm, n2_norm, JaroWinkler.similarity)
         features["name_token_sort_ratio"]   = _cdist_pairs(n1_norm, n2_norm, lambda a,b: rfuzz.token_sort_ratio(a,b)/100.0)
-        features["name_token_set_ratio"]    = _cdist_pairs(n1_norm, n2_norm, lambda a,b: rfuzz.token_set_ratio(a,b)/100.0)
         features["name_levenshtein_ratio"]  = _cdist_pairs(n1_norm, n2_norm, Levenshtein.normalized_similarity)
-        features["name_partial_ratio"]      = _cdist_pairs(n1_norm, n2_norm, lambda a,b: rfuzz.partial_ratio(a,b)/100.0)
+        # DROPPED: name_token_set_ratio, name_partial_ratio (low importance, very slow)
 
-        # 2. Address Lexical Features
+        # 2. Address Lexical Features (kept: top 2 most important addr features)
         features["addr_jaro_winkler"]       = _cdist_pairs(a1_norm, a2_norm, JaroWinkler.similarity)
-        features["addr_token_sort_ratio"]   = _cdist_pairs(a1_norm, a2_norm, lambda a,b: rfuzz.token_sort_ratio(a,b)/100.0)
-        features["addr_token_set_ratio"]    = _cdist_pairs(a1_norm, a2_norm, lambda a,b: rfuzz.token_set_ratio(a,b)/100.0)
         features["addr_levenshtein_ratio"]  = _cdist_pairs(a1_norm, a2_norm, Levenshtein.normalized_similarity)
-        features["addr_partial_ratio"]      = _cdist_pairs(a1_norm, a2_norm, lambda a,b: rfuzz.partial_ratio(a,b)/100.0)
+        # DROPPED: addr_token_sort_ratio, addr_token_set_ratio, addr_partial_ratio (low importance, very slow)
 
         # 3. Structural Features — fully vectorized via numpy
         n1_len = np.array([len(s) for s in n1_norm], dtype=np.float32)
