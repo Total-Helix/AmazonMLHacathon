@@ -14,6 +14,9 @@ def package_submission():
         'output/candidate_pairs.tsv',
         'src',
         'main.py',
+        'role1_gpu_preprocessor.py',
+        'role2_faiss_blocking.py',
+        'MASTER_MENU.bat',
         'tanuj_requirements.txt',
         'Documentation_template.md'
     ]
@@ -25,16 +28,31 @@ def package_submission():
                 continue
                 
             if os.path.isfile(item):
-                zipf.write(item, item)
+                # If it's an output file or documentation, keep it at root level (or output/)
+                if item.startswith('output/') or item == 'Documentation_template.md':
+                    zip_path = item
+                else:
+                    # Put code files inside the required code/business_entity_resolution/ folder
+                    zip_path = f"code/business_entity_resolution/{item}"
+                zipf.write(item, zip_path)
             else:
                 for root, dirs, files in os.walk(item):
                     for file in files:
                         if '__pycache__' not in root and not file.endswith('.pyc'):
                             file_path = os.path.join(root, file)
-                            zipf.write(file_path, file_path)
+                            
+                            # Keep output/ in output/
+                            if file_path.startswith('output\\') or file_path.startswith('output/'):
+                                zip_path = file_path
+                            else:
+                                # Put all other code inside the required folder
+                                zip_path = f"code/business_entity_resolution/{file_path}"
+                                
+                            zipf.write(file_path, zip_path)
                             
     print(f"\nSuccess! Ready for upload: {zip_filename}")
-    print("Upload 'output/matching_results.tsv' to the portal and keep the zip for final review.")
+    print("-> 1. Upload 'output/matching_results.tsv' to the portal leaderboard.")
+    print("-> 2. Keep the zip file for the Final Submission Package.")
 
 if __name__ == "__main__":
     package_submission()
