@@ -37,9 +37,9 @@ goto MENU
 cls
 echo --- RUNNING ROLE 2 (FAISS/PYTORCH BLOCKING) ---
 echo [*] Installing PyTorch with NVIDIA CUDA support...
-pip uninstall torch -y --quiet
-pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121 --quiet
-pip install faiss-cpu pandas numpy --quiet
+pip uninstall torch -y
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+pip install faiss-cpu pandas numpy
 python role2_faiss_blocking.py
 pause
 goto MENU
