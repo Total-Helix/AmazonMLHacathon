@@ -309,13 +309,18 @@ class FeatureEngineeringEngine:
         unique_names = list(set(name_1 + name_2))
 
         # Batch encode with normalization (so dot product equals cosine similarity)
+        import torch
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cpu":
+            print("[!] WARNING: PyTorch is running on CPU! The GPU was not detected. This will take ~15 minutes.")
+            
         full_emb_map = dict(zip(
             unique_full,
-            model.encode(unique_full, batch_size=self.config.embedding_batch_size, normalize_embeddings=True, show_progress_bar=False)
+            model.encode(unique_full, batch_size=self.config.embedding_batch_size, normalize_embeddings=True, show_progress_bar=True, device=device)
         ))
         name_emb_map = dict(zip(
             unique_names,
-            model.encode(unique_names, batch_size=self.config.embedding_batch_size, normalize_embeddings=True, show_progress_bar=False)
+            model.encode(unique_names, batch_size=self.config.embedding_batch_size, normalize_embeddings=True, show_progress_bar=True, device=device)
         ))
 
         # Lookup embeddings and compute dot product
