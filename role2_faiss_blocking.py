@@ -47,56 +47,80 @@ class FaissCandidateGenerator:
         all_I = []
         all_D = []
         
-        print(f"[*] Starting Ultra-Low Memory GPU Search for {len(s1_df)} Source 1 entities...")
-        
-        # Loop through Source 1 (Queries) one chunk at a time
-        for s1_idx, s1_chunk_file in enumerate(s1_files):
-            print(f"    -> Processing Query Chunk {s1_idx + 1}/{len(s1_files)}...")
-            
-            s1_embs = np.load(s1_chunk_file).astype('float32')
-            q_tensor = torch.tensor(s1_embs, device=device)
-            q_tensor = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
-            del s1_embs
-            
-            # Keep a running tracker of the Best Top-K scores and indices for THIS query chunk
-            best_scores = torch.full((q_tensor.shape[0], self.top_k), -1.0, device=device)
-            best_indices = torch.zeros((q_tensor.shape[0], self.top_k), dtype=torch.int64, device=device)
-            
-            global_candidate_offset = 0
-            
-            # Loop through Source 2 & 3 (Candidates) one chunk at a time
-            for s2s3_chunk_file in s2_s3_files:
-                db_embs = np.load(s2s3_chunk_file).astype('float32')
-                db_tensor = torch.tensor(db_embs, device=device)
-                db_tensor = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
+        if use_gpu:
+            print(f"[*] Starting Ultra-Low Memory GPU Search for {len(s1_df)} Source 1 entities...")
+            for s1_idx, s1_chunk_file in enumerate(s1_files):
+                print(f"    -> Processing Query Chunk {s1_idx + 1}/{len(s1_files)}...")
                 
-                # Multiply Query Batch x Database Batch
-                similarity = torch.matmul(q_tensor, db_tensor.T)
+                s1_embs = np.load(s1_chunk_file).astype('float32')
+                q_tensor = torch.tensor(s1_embs, device=device)
+                q_tensor = torch.nn.functional.normalize(q_tensor, p=2, dim=1)
+                del s1_embs
                 
-                # Get the Top K from THIS specific comparison
-                k = min(self.top_k, similarity.shape[1])
-                local_top_scores, local_top_indices = torch.topk(similarity, k, dim=1)
+                best_scores = torch.full((q_tensor.shape[0], self.top_k), -1.0, device=device)
+                best_indices = torch.zeros((q_tensor.shape[0], self.top_k), dtype=torch.int64, device=device)
+                global_candidate_offset = 0
                 
-                # Offset indices so they map to the global candidate pool dataframe
-                local_top_indices += global_candidate_offset
-                global_candidate_offset += db_tensor.shape[0]
+                for s2s3_chunk_file in s2_s3_files:
+                    db_embs = np.load(s2s3_chunk_file).astype('float32')
+                    db_tensor = torch.tensor(db_embs, device=device)
+                    db_tensor = torch.nn.functional.normalize(db_tensor, p=2, dim=1)
+                    
+                    similarity = torch.matmul(q_tensor, db_tensor.T)
+                    
+                    k = min(self.top_k, similarity.shape[1])
+                    local_top_scores, local_top_indices = torch.topk(similarity, k, dim=1)
+                    local_top_indices += global_candidate_offset
+                    global_candidate_offset += db_tensor.shape[0]
+                    
+                    combined_scores = torch.cat([best_scores, local_top_scores], dim=1)
+                    combined_indices = torch.cat([best_indices, local_top_indices], dim=1)
+                    
+                    best_scores, final_top_idx = torch.topk(combined_scores, self.top_k, dim=1)
+                    best_indices = torch.gather(combined_indices, 1, final_top_idx)
+                    
+                    del db_embs, db_tensor, similarity, local_top_scores, local_top_indices, combined_scores, combined_indices, final_top_idx
+                    torch.cuda.empty_cache()
                 
-                # Concatenate the running best with this chunk's best, and keep the overall Top K
-                combined_scores = torch.cat([best_scores, local_top_scores], dim=1)
-                combined_indices = torch.cat([best_indices, local_top_indices], dim=1)
-                
-                best_scores, final_top_idx = torch.topk(combined_scores, self.top_k, dim=1)
-                best_indices = torch.gather(combined_indices, 1, final_top_idx)
-                
-                del db_embs, db_tensor, similarity, local_top_scores, local_top_indices, combined_scores, combined_indices, final_top_idx
+                all_D.append(best_scores.cpu().numpy())
+                all_I.append(best_indices.cpu().numpy())
+                del q_tensor, best_scores, best_indices
                 torch.cuda.empty_cache()
+                gc.collect()
+
+        else:
+            # --- FAISS CPU SEARCH (Approximate Nearest Neighbors) ---
+            print("[*] Building FAISS IVF Index incrementally to save RAM...")
+            nlist = 1024
+            quantizer = faiss.IndexFlatIP(self.dimension)
+            index = faiss.IndexIVFFlat(quantizer, self.dimension, nlist, faiss.METRIC_INNER_PRODUCT)
             
-            # Finished scanning all candidates for this S1 query chunk
-            all_D.append(best_scores.cpu().numpy())
-            all_I.append(best_indices.cpu().numpy())
-            del q_tensor, best_scores, best_indices
-            torch.cuda.empty_cache()
-            gc.collect()
+            if s2_s3_files:
+                print("    -> Training FAISS index on data sample...")
+                sample_embs = np.load(s2_s3_files[0]).astype('float32')
+                faiss.normalize_L2(sample_embs)
+                index.train(sample_embs)
+                del sample_embs
+                gc.collect()
+
+            for chunk_file in s2_s3_files:
+                embs = np.load(chunk_file).astype('float32')
+                faiss.normalize_L2(embs)
+                index.add(embs)
+                del embs
+                gc.collect()
+            print("[*] FAISS Index built successfully!")
+
+            index.nprobe = 16
+            print(f"[*] Querying FAISS index for {len(s1_df)} Source 1 entities...")
+            for chunk_file in s1_files:
+                s1_embs = np.load(chunk_file).astype('float32')
+                faiss.normalize_L2(s1_embs)
+                D, I = index.search(s1_embs, self.top_k)
+                all_D.append(D)
+                all_I.append(I)
+                del s1_embs
+                gc.collect()
 
         D = np.vstack(all_D)
         I = np.vstack(all_I)
