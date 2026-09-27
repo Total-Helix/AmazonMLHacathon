@@ -80,9 +80,23 @@ class FaissCandidateGenerator:
             torch.cuda.empty_cache()
 
         else:
-            # --- FAISS CPU SEARCH ---
-            print("[*] Building FAISS Index incrementally to save RAM...")
-            index = faiss.IndexFlatIP(self.dimension)
+            # --- FAISS CPU SEARCH (Approximate Nearest Neighbors) ---
+            # Standard Flat search takes hours on massive datasets. We use IVF for 100x speed.
+            print("[*] Building FAISS IVF Index incrementally to save RAM...")
+            
+            nlist = 1024 # Number of Voronoi cell clusters
+            quantizer = faiss.IndexFlatIP(self.dimension)
+            index = faiss.IndexIVFFlat(quantizer, self.dimension, nlist, faiss.METRIC_INNER_PRODUCT)
+            
+            # FAISS IVF requires training on a sample of the data first to build the clusters
+            if s2_s3_files:
+                print("    -> Training FAISS index on data sample...")
+                sample_embs = np.load(s2_s3_files[0]).astype('float32')
+                faiss.normalize_L2(sample_embs)
+                index.train(sample_embs)
+                del sample_embs
+                gc.collect()
+
             for chunk_file in s2_s3_files:
                 embs = np.load(chunk_file).astype('float32')
                 faiss.normalize_L2(embs)
@@ -91,6 +105,8 @@ class FaissCandidateGenerator:
                 gc.collect()
             print("[*] FAISS Index built successfully!")
 
+            # nprobe determines how many nearby clusters to search. Higher = more accurate but slightly slower.
+            index.nprobe = 16
             print(f"[*] Querying FAISS index for {len(s1_df)} Source 1 entities...")
             for chunk_file in s1_files:
                 s1_embs = np.load(chunk_file).astype('float32')
