@@ -142,7 +142,7 @@ class ERConfig:
     # Essential for cross-lingual matches (e.g. French 'Pharmacie Centrale' -> 'Central Pharmacy').
     embedding_model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_batch_size: int = 64
-    use_embeddings: bool = True  # Can be disabled for ultra-fast pure lexical testing
+    use_embeddings: bool = False  # Disabled for 10x speedup on CPU
 
     # LightGBM Classifier Parameters
     lgbm_params: Dict[str, Any] = field(default_factory=lambda: {
@@ -151,8 +151,8 @@ class ERConfig:
         "metric": "binary_logloss",
         "n_estimators": 300,
         "learning_rate": 0.05,
-        "num_leaves": 31,
-        "max_depth": 6,
+        "num_leaves": 63, # Increased to capture deeper lexical patterns
+        "max_depth": 7,
         "min_child_samples": 2,  # Adaptive for small bootstrap sets; scales seamlessly to millions of rows
         "subsample": 0.8,
         "colsample_bytree": 0.8,
