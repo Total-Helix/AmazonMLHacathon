@@ -425,43 +425,61 @@ class DataLoader:
         - country_2: Country of Candidate
         - label: Binary target (1 = match, 0 = non-match distractor; NaN if ground_truth is None)
         """
-        s1_lookup = s1_df.set_index("entity_id").to_dict(orient="index")
-        
-        rows = []
+        # --- FAST VECTORIZED APPROACH: Build pairs via pandas merge instead of Python loops ---
+        # Build a flat (s1_id, cand_id) table from the dict first
+        s1_ids_flat = []
+        cand_ids_flat = []
         for s1_id, cand_ids in candidate_pairs.items():
-            s1_info = s1_lookup.get(s1_id, {"business_name": "", "business_address": "", "country": ""})
-            s1_name = s1_info.get("business_name", "")
-            s1_addr = s1_info.get("business_address", "")
-            s1_country = s1_info.get("country", "")
+            s1_ids_flat.extend([s1_id] * len(cand_ids))
+            cand_ids_flat.extend(cand_ids)
 
-            true_matches = ground_truth.get(s1_id, set()) if ground_truth is not None else None
+        pairs_flat = pd.DataFrame({"source1_id": s1_ids_flat, "cand_id": cand_ids_flat})
 
-            for cand_id in cand_ids:
-                cand_info = target_lookup.get(cand_id, {"business_name": "", "business_address": "", "country": ""})
-                cand_name = cand_info.get("business_name", "")
-                cand_addr = cand_info.get("business_address", "")
-                cand_country = cand_info.get("country", "")
+        # Build S1 lookup dataframe
+        s1_info_df = s1_df[["entity_id", "business_name", "business_address", "country"]].rename(columns={
+            "entity_id": "source1_id", "business_name": "name_1",
+            "business_address": "addr_1", "country": "country_1"
+        })
 
-                label = None
-                if true_matches is not None:
-                    label = 1 if cand_id in true_matches else 0
+        # Build target lookup dataframe
+        if target_lookup:
+            tgt_rows = [{"cand_id": cid, "business_name": v.get("business_name", ""),
+                         "business_address": v.get("business_address", ""), "country": v.get("country", "")}
+                        for cid, v in target_lookup.items()]
+            tgt_df = pd.DataFrame(tgt_rows).rename(columns={
+                "business_name": "name_2", "business_address": "addr_2", "country": "country_2"
+            })
+        else:
+            tgt_df = pd.DataFrame(columns=["cand_id", "name_2", "addr_2", "country_2"])
 
-                rows.append({
-                    "source1_id": s1_id,
-                    "cand_id": cand_id,
-                    "name_1": s1_name,
-                    "name_2": cand_name,
-                    "addr_1": s1_addr,
-                    "addr_2": cand_addr,
-                    "country_1": s1_country,
-                    "country_2": cand_country,
-                    "label": label
-                })
+        # Merge S1 info, then target info — vectorized, no Python loop over rows
+        pairwise_df = pairs_flat.merge(s1_info_df, on="source1_id", how="left")
+        pairwise_df = pairwise_df.merge(tgt_df, on="cand_id", how="left")
 
-        pairwise_df = pd.DataFrame(rows)
+        # Fill NaN strings
+        for col in ["name_1", "name_2", "addr_1", "addr_2", "country_1", "country_2"]:
+            pairwise_df[col] = pairwise_df[col].fillna("").astype(str)
+
+        # Assign labels if ground truth is available
+        if ground_truth is not None:
+            gt_set = {s1: list(matches) for s1, matches in ground_truth.items()}
+            gt_flat = pd.DataFrame([
+                {"source1_id": s1, "cand_id": cid}
+                for s1, cids in gt_set.items() for cid in cids
+            ])
+            if not gt_flat.empty:
+                gt_flat["label"] = 1
+                pairwise_df = pairwise_df.merge(gt_flat, on=["source1_id", "cand_id"], how="left")
+                pairwise_df["label"] = pairwise_df["label"].fillna(0).astype(int)
+            else:
+                pairwise_df["label"] = 0
+        else:
+            pairwise_df["label"] = None
+
         if pairwise_df.empty:
             pairwise_df = pd.DataFrame(columns=[
                 "source1_id", "cand_id", "name_1", "name_2",
                 "addr_1", "addr_2", "country_1", "country_2", "label"
             ])
         return pairwise_df
+
