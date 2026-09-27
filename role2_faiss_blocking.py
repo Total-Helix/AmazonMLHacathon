@@ -140,28 +140,43 @@ class FaissCandidateGenerator:
         D = np.vstack(all_D)
         I = np.vstack(all_I)
 
-        # 4. Generate candidate_pairs.tsv format
+        # 4. Generate candidate_pairs.tsv format — VECTORIZED (no Python loops over rows)
         print("[*] Formatting results for Role 3...")
-        candidate_pairs = []
-        
-        for i in range(len(s1_df)):
-            s1_id = s1_df.iloc[i]['entity_id']
-            
-            # Get the actual entity_ids of the candidates using the FAISS indices
-            # We filter out matches that have a terrible cosine similarity (e.g. < 0.6) to keep precision high
-            good_candidates = []
-            for rank, candidate_idx in enumerate(I[i]):
-                similarity_score = D[i][rank]
-                if similarity_score > 0.60: # Threshold to drop absolute garbage matches early
-                    good_candidates.append(candidate_pool_df.iloc[candidate_idx]['entity_id'])
-            
-            # Join with commas as requested by Hackathon rules
-            cand_string = ",".join(good_candidates)
-            candidate_pairs.append({'source1_entity_id': s1_id, 'candidate_entity_ids': cand_string})
 
-        # Save the final file
-        os.makedirs("output", exist_ok=True)
-        out_df = pd.DataFrame(candidate_pairs)
+        # Extract arrays once (avoids repeated iloc calls)
+        D_flat = D  # shape: (n_s1, top_k)
+        I_flat = I  # shape: (n_s1, top_k)
+        pool_ids = candidate_pool_df["entity_id"].values  # numpy array for fast indexing
+
+        # Build a flat DataFrame of all (s1_idx, candidate_idx, score) triplets
+        n_queries = len(s1_df)
+        s1_id_col   = np.repeat(s1_df["entity_id"].values, self.top_k)
+        cand_idx_col = I_flat.ravel()
+        score_col    = D_flat.ravel()
+
+        pairs_df = pd.DataFrame({
+            "source1_entity_id": s1_id_col,
+            "cand_idx": cand_idx_col,
+            "score": score_col
+        })
+
+        # Filter out low-quality matches and invalid indices
+        pairs_df = pairs_df[(pairs_df["score"] > 0.60) & (pairs_df["cand_idx"] >= 0)]
+
+        # Map candidate indices to entity IDs using numpy fancy indexing
+        pairs_df["candidate_entity_id"] = pool_ids[pairs_df["cand_idx"].values]
+
+        # Aggregate: group by s1 id, join candidate ids with comma
+        agg_df = pairs_df.groupby("source1_entity_id", sort=False)["candidate_entity_id"].apply(
+            lambda x: ",".join(x.tolist())
+        ).reset_index()
+        agg_df.columns = ["source1_entity_id", "candidate_entity_ids"]
+
+        # Ensure every S1 entity appears (even singletons with no good candidates)
+        all_s1 = pd.DataFrame({"source1_entity_id": s1_df["entity_id"].values})
+        out_df = all_s1.merge(agg_df, on="source1_entity_id", how="left")
+        out_df["candidate_entity_ids"] = out_df["candidate_entity_ids"].fillna("")
+
         out_df.to_csv("output/candidate_pairs.tsv", sep='\t', index=False)
         print(f"✅ Saved massive candidate generation to: output/candidate_pairs.tsv")
         print("🎉 Role 2 Complete! Handing off to Role 3 (Tanuj) for LightGBM Scoring.")

@@ -97,10 +97,20 @@ class InferenceEngine:
         print(f"[InferenceEngine] Test Source 1 entities: {len(all_test_s1_ids)}")
         print(f"[InferenceEngine] Candidate pair lists: {len(candidate_pairs)}")
 
-        # Build pairwise DataFrame
+        # Build pairwise DataFrame (expensive but required)
         print("[InferenceEngine] Expanding candidate pairs to pairwise DataFrame...")
         pairwise_df = loader.build_pairwise_dataframe(s1_df, target_lookup, candidate_pairs, ground_truth=None)
         print(f"[InferenceEngine] Total candidate pairs to score: {len(pairwise_df)}")
+
+        # Quick pre‑filter: drop obvious cross‑country pairs (cheapest check)
+        # This reduces the number of rows fed into the heavy feature engine.
+        # Countries are strings; compare case‑insensitively, treat missing as match.
+        c1 = pairwise_df["country_1"].fillna("").astype(str).str.upper()
+        c2 = pairwise_df["country_2"].fillna("").astype(str).str.upper()
+        country_match_mask = (c1 == c2) | c1.eq("") | c2.eq("")
+        prefiltered_count = len(pairwise_df)
+        pairwise_df = pairwise_df[country_match_mask]
+        print(f"[InferenceEngine] Country pre‑filter kept {len(pairwise_df)} / {prefiltered_count} pairs")
 
         # Predict match probabilities if there are candidate pairs
         final_matches_map: Dict[str, List[str]] = {s1: [] for s1 in all_test_s1_ids}
@@ -115,7 +125,6 @@ class InferenceEngine:
 
             print("[InferenceEngine] Scoring candidate pairs with LightGBM...")
             pred_probs = self.model.predict_proba(X_test)[:, 1]
-            pairwise_df = pairwise_df.copy()
             pairwise_df["score"] = pred_probs
 
             # Filter candidates based on optimal F_0.5 threshold
@@ -152,27 +161,30 @@ class InferenceEngine:
         Guarantees that EVERY Source 1 entity appears exactly once.
         Singletons / non-matches are written with an empty string in the second column.
         """
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f, delimiter="\t", lineterminator="\n")
-            writer.writerow(["source1_entity_id", "matched_entity_ids"])
-            for s1_id in all_s1_ids:
-                matched_list = matches_map.get(s1_id, [])
-                # Ensure no S1 self-matches and no duplicates
-                cleaned_matches = [m for m in dict.fromkeys(matched_list) if m.startswith(("S2-", "S3-"))]
-                writer.writerow([s1_id, ",".join(cleaned_matches)])
+        # Vectorized bulk write — much faster than csv.writer loop over 1.7M rows
+        ids = all_s1_ids
+        matched = [
+            ",".join(m for m in dict.fromkeys(matches_map.get(s, [])) if m.startswith(("S2-", "S3-")))
+            for s in ids
+        ]
+        pd.DataFrame({"source1_entity_id": ids, "matched_entity_ids": matched}).to_csv(
+            path, sep="\t", index=False, lineterminator="\n"
+        )
 
     def _write_candidate_pairs(self, path: Path, all_s1_ids: List[str], cand_map: Dict[str, List[str]]) -> None:
         """
         Writes `candidate_pairs.tsv` strictly with TAB separator.
         Guarantees that EVERY Source 1 entity appears exactly once.
         """
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            writer = csv.writer(f, delimiter="\t", lineterminator="\n")
-            writer.writerow(["source1_entity_id", "candidate_entity_ids"])
-            for s1_id in all_s1_ids:
-                cand_list = cand_map.get(s1_id, [])
-                cleaned_cands = [c for c in dict.fromkeys(cand_list) if c.startswith(("S2-", "S3-"))]
-                writer.writerow([s1_id, ",".join(cleaned_cands)])
+        ids = all_s1_ids
+        cands = [
+            ",".join(c for c in dict.fromkeys(cand_map.get(s, [])) if c.startswith(("S2-", "S3-")))
+            for s in ids
+        ]
+        pd.DataFrame({"source1_entity_id": ids, "candidate_entity_ids": cands}).to_csv(
+            path, sep="\t", index=False, lineterminator="\n"
+        )
+
 
     def validate_outputs(self, matching_path: Path, candidate_path: Path) -> None:
         """
