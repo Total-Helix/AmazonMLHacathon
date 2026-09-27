@@ -1,14 +1,20 @@
 @echo off
 color 0A
 
-:: Check if Python 3.11 is installed to bypass the Python 3.14 PyTorch bug
-python3.11 --version >nul 2>&1
+:: Check if Python 3.12 or 3.11 is installed to bypass the Python 3.14 PyTorch bug
+python3.12 --version >nul 2>&1
 if %errorlevel% equ 0 (
-    set PY_CMD=python3.11
-    set PIP_CMD=python3.11 -m pip
+    set PY_CMD=python3.12
+    set PIP_CMD=python3.12 -m pip
 ) else (
-    set PY_CMD=python
-    set PIP_CMD=pip
+    python3.11 --version >nul 2>&1
+    if %errorlevel% equ 0 (
+        set PY_CMD=python3.11
+        set PIP_CMD=python3.11 -m pip
+    ) else (
+        set PY_CMD=python
+        set PIP_CMD=pip
+    )
 )
 
 :MENU
