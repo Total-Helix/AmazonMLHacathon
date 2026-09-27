@@ -153,7 +153,7 @@ class ERConfig:
     # Essential for cross-lingual matches (e.g. French 'Pharmacie Centrale' -> 'Central Pharmacy').
     embedding_model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_batch_size: int = 512 # Boosted from 64 to max out RTX 5050 VRAM (4x faster)
-    use_embeddings: bool = True  # Re-enabled for maximum accuracy on GPU
+    use_embeddings: bool = False  # Disabled because user's PyTorch is trapped on CPU (saves 21 hours)
 
     # LightGBM Classifier Parameters
     lgbm_params: Dict[str, Any] = field(default_factory=lambda: {
