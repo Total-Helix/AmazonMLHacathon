@@ -14,14 +14,17 @@ class FaissCandidateGenerator:
         import gc
         print("[*] Loading cleaned TSV data...")
         try:
-            s1_df = pd.read_csv("data/clean_data/test_source1_clean.tsv", sep='\t')
-            s2_df = pd.read_csv("data/clean_data/test_source2_clean.tsv", sep='\t')
-            s3_df = pd.read_csv("data/clean_data/test_source3_clean.tsv", sep='\t')
+            # OPTIMIZATION: Only load 'entity_id' to save gigabytes of RAM. We don't need text here.
+            s1_df = pd.read_csv("data/clean_data/test_source1_clean.tsv", sep='\t', usecols=['entity_id'])
+            s2_df = pd.read_csv("data/clean_data/test_source2_clean.tsv", sep='\t', usecols=['entity_id'])
+            s3_df = pd.read_csv("data/clean_data/test_source3_clean.tsv", sep='\t', usecols=['entity_id'])
         except FileNotFoundError:
             print("❌ Error: Cleaned data missing! Did Role 1 run the GPU script yet?")
             return
 
         candidate_pool_df = pd.concat([s2_df, s3_df], ignore_index=True)
+        del s2_df, s3_df
+        gc.collect()
         
         # Check if PyTorch GPU is available
         use_gpu = False
