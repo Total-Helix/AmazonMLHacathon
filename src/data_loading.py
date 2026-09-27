@@ -388,22 +388,19 @@ class DataLoader:
             ground_truth = {s1: set(matches) for s1, matches in gt_dict.items()}
 
         # Load or Generate candidate pairs
-        try:
+        if is_train:
+            print("[*] Auto-generating synthetic training candidates from Ground Truth to save time...")
+            candidate_pairs = {}
+            target_ids = list(target_lookup.keys())
+            import random
+            random.seed(self.config.random_seed) # Deterministic
+            for s1, matches in ground_truth.items():
+                # 1 positive match + 4 random negative matches per query
+                cands = list(matches)
+                cands.extend(random.sample(target_ids, min(4, len(target_ids))))
+                candidate_pairs[s1] = cands
+        else:
             candidate_pairs = self.load_id_list_tsv(cand_path, value_col_name="candidate_entity_ids")
-        except FileNotFoundError:
-            if is_train:
-                print(f"[!] Warning: {cand_path} missing!")
-                print("[*] Auto-generating synthetic training candidates from Ground Truth to save time...")
-                candidate_pairs = {}
-                target_ids = list(target_lookup.keys())
-                import random
-                for s1, matches in ground_truth.items():
-                    # 1 positive match + 4 random negative matches per query
-                    cands = list(matches)
-                    cands.extend(random.sample(target_ids, min(4, len(target_ids))))
-                    candidate_pairs[s1] = cands
-            else:
-                raise
 
         return s1_df, target_lookup, ground_truth, candidate_pairs
 
