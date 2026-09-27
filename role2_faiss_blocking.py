@@ -35,13 +35,10 @@ class FaissCandidateGenerator:
                 print(f"[*] Detected GPU: {torch.cuda.get_device_name(0)}")
                 print("[*] Activating PyTorch Chunked GPU Search (Bypassing 16GB RAM Limit)...")
         except ImportError:
-            print("[!] PyTorch not found. Please run the updated MASTER_MENU.bat to install it!")
-            return
+            print("[!] PyTorch not found. Falling back to FAISS CPU search...")
 
         if not use_gpu:
-            print("❌ Error: No GPU detected for Role 2. The 17.6GB dataset will crash your RAM.")
-            print("Please ensure you run MASTER_MENU.bat to install PyTorch with CUDA!")
-            return
+            print("[!] Proceeding with optimized FAISS CPU Search (IVF)...")
 
         s2_s3_files = glob.glob("data/clean_data/test_source2_clean_embeddings_chunk*.npy") + \
                       glob.glob("data/clean_data/test_source3_clean_embeddings_chunk*.npy")
