@@ -65,8 +65,8 @@ goto MENU
 :ROLE3
 cls
 echo --- RUNNING ROLE 3 (LIGHTGBM ML) ---
-%PIP_CMD% install lightgbm scikit-learn pandas --quiet
-%PIP_CMD% install -r requirements.txt --quiet
+echo [*] Installing ML Dependencies (LightGBM, RapidFuzz)...
+%PIP_CMD% install lightgbm scikit-learn pandas rapidfuzz sentence-transformers
 %PY_CMD% main.py --use-real-data --train --infer
 pause
 goto MENU
