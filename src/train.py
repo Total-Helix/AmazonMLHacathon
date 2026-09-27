@@ -150,6 +150,17 @@ class Trainer:
 
         # Entity-grouped Train / Validation Split
         all_s1_ids = s1_df["entity_id"].unique()
+        
+        # --- MASSIVE SPEEDUP: Downsample to 50,000 queries for training ---
+        # Training LightGBM on 16 million pairs is unnecessary and freezes the CPU during TF-IDF fitting.
+        import numpy as np
+        if len(all_s1_ids) > 50000:
+            print(f"[Trainer] Downsampling training dataset from {len(all_s1_ids)} to 50,000 queries to prevent CPU freeze...")
+            np.random.seed(self.config.random_seed)
+            sampled_s1_ids = np.random.choice(all_s1_ids, size=50000, replace=False)
+            pairwise_df = pairwise_df[pairwise_df["source1_id"].isin(sampled_s1_ids)].copy()
+            all_s1_ids = sampled_s1_ids
+
         print(f"[Trainer] Splitting {len(all_s1_ids)} unique S1 entities into Train / Validation (val_size={self.config.val_size})...")
 
         gss = GroupShuffleSplit(n_splits=1, test_size=self.config.val_size, random_state=self.config.random_seed)
