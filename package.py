@@ -17,7 +17,7 @@ def package_submission():
         'role1_gpu_preprocessor.py',
         'role2_faiss_blocking.py',
         'MASTER_MENU.bat',
-        'tanuj_requirements.txt',
+        'requirements.txt',
         'Documentation_template.md'
     ]
     
