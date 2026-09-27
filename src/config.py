@@ -37,7 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATA_DIR = PROJECT_ROOT / "data"
 FAKE_DATA_DIR = DATA_DIR / "fake_data"
-REAL_DATA_DIR = PROJECT_ROOT / "dataset"
+REAL_DATA_DIR = PROJECT_ROOT / "student_resource" / "dataset"
 
 OUTPUT_DIR = PROJECT_ROOT / "output"
 MODEL_DIR = PROJECT_ROOT / "models"
