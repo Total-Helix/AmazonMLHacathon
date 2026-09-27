@@ -64,7 +64,6 @@ class GPUDatasetPreprocessor:
         chunk_iter = pd.read_csv(file_path, sep='\t', chunksize=chunk_size)
         
         is_first_chunk = True
-        all_embeddings = []
         
         for i, chunk in enumerate(chunk_iter):
             print(f"    -> Cleaning Chunk {i+1} ({len(chunk)} rows)...")
@@ -84,7 +83,10 @@ class GPUDatasetPreprocessor:
                 show_progress_bar=False, 
                 device=self.device
             )
-            all_embeddings.append(embeddings)
+            
+            # SAVE EMBEDDINGS IMMEDIATELY TO DISK TO PREVENT RAM CRASH
+            chunk_npy_path = output_path.replace('.tsv', f'_embeddings_chunk{i}.npy')
+            np.save(chunk_npy_path, embeddings)
             
             # Save the cleaned text TSV
             mode = 'w' if is_first_chunk else 'a'
@@ -93,18 +95,13 @@ class GPUDatasetPreprocessor:
             
             is_first_chunk = False
             
-            # Free VRAM
+            # Free RAM & VRAM
+            del embeddings
+            del combined_text
             torch.cuda.empty_cache()
             gc.collect()
             
-        # Stack all embeddings and save as a compressed Numpy array
-        print(f"    -> Saving dense vector embeddings to disk...")
-        final_embeddings = np.vstack(all_embeddings)
-        npy_path = output_path.replace('.tsv', '_embeddings.npy')
-        np.save(npy_path, final_embeddings)
-        
         print(f"✅ Saved cleaned dataset to: {output_path}")
-        print(f"✅ Saved GPU embeddings to: {npy_path}")
 
 if __name__ == "__main__":
     preprocessor = GPUDatasetPreprocessor()
